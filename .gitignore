@@ -1,0 +1,6 @@
+.env
+.env.*
+*.log
+workspace/
+.docker-cache/
+comfyui-auth/credentials.json

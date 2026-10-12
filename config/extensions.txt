@@ -1,0 +1,7 @@
+# Open VSX ids. Continue is required; the rest are best-effort at build time.
+Continue.continue
+ms-python.python
+ms-toolsai.jupyter
+dbaeumer.vscode-eslint
+esbenp.prettier-vscode
+EditorConfig.EditorConfig

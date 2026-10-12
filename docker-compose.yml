@@ -1,0 +1,33 @@
+# CPU smoke test. Does not replace the Runpod GPU image.
+#   copy env.example to .env, then: docker compose up --build
+
+services:
+  ide:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: local
+      args:
+        CODE_SERVER_VERSION: "4.137.0"
+        OLLAMA_VERSION: "0.34.2"
+    image: vscode-cloud:local-v0.1.0
+    platform: linux/amd64
+    ports:
+      - "8080:8080"
+    environment:
+      PASSWORD: ${PASSWORD:-localdev}
+      OLLAMA_HOST: 127.0.0.1:11434
+      OLLAMA_MODELS: /workspace/ollama
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5-coder:1.5b}
+      HF_HOME: /workspace/.cache/huggingface
+    volumes:
+      - workspace:/workspace
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8080/login"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 20s
+
+volumes:
+  workspace:

@@ -1,0 +1,12 @@
+.git
+.gitignore
+.cursor
+**/.DS_Store
+**/*.md
+!config/**
+workspace
+.env
+.env.*
+*.log
+scripts/build.ps1
+scripts/create-pod.ps1

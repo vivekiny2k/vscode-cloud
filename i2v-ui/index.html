@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Image to Video</title>
+  <style>
+    :root {
+      --bg: #111113;
+      --panel: #1c1c1f;
+      --line: #2e2e33;
+      --text: #ececec;
+      --muted: #9a9aa3;
+      --accent: #6d8cff;
+      --danger: #e36a6a;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--text); font: 15px/1.45 system-ui, sans-serif; }
+    main { max-width: 720px; margin: 0 auto; padding: 32px 20px 64px; }
+    h1 { font-size: 22px; font-weight: 600; margin: 0 0 6px; }
+    .sub { color: var(--muted); margin: 0 0 28px; }
+    .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 20px; }
+    label { display: block; font-size: 13px; color: var(--muted); margin: 0 0 8px; }
+    .drop {
+      border: 1px dashed var(--line);
+      border-radius: 8px;
+      min-height: 220px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      overflow: hidden;
+      position: relative;
+      background: #161618;
+    }
+    .drop.has-image { border-style: solid; }
+    .drop img { max-width: 100%; max-height: 360px; display: block; }
+    .drop span { color: var(--muted); }
+    textarea {
+      width: 100%;
+      min-height: 96px;
+      resize: vertical;
+      margin-top: 16px;
+      background: #161618;
+      color: var(--text);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px 12px;
+      font: inherit;
+    }
+    textarea:focus, button:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+    .row { display: flex; gap: 12px; align-items: center; margin-top: 16px; }
+    button {
+      appearance: none;
+      border: 0;
+      background: var(--accent);
+      color: #0c1020;
+      font: 600 14px/1 system-ui, sans-serif;
+      padding: 12px 18px;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .status { color: var(--muted); font-size: 13px; }
+    .status.err { color: var(--danger); }
+    video, .out-img {
+      width: 100%;
+      margin-top: 20px;
+      border-radius: 8px;
+      background: #000;
+      display: none;
+    }
+    video.show, .out-img.show { display: block; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Image to video</h1>
+    <p class="sub">Wan 2.2 Lightning · about 5 seconds · usually 1–2 minutes</p>
+    <form class="panel" id="form">
+      <label>Picture</label>
+      <div class="drop" id="drop">
+        <span>Drop a photo or click to upload</span>
+        <img id="preview" alt="" hidden />
+      </div>
+      <input id="file" type="file" accept="image/*" hidden />
+      <label for="prompt" style="margin-top:16px">Prompt</label>
+      <textarea id="prompt" placeholder="What should happen in the video" required></textarea>
+      <div class="row">
+        <button type="submit" id="go">Generate</button>
+        <div class="status" id="status"></div>
+      </div>
+    </form>
+    <video id="player" controls playsinline></video>
+    <img class="out-img" id="still" alt="Result" />
+  </main>
+  <script>
+    const NEGATIVE = "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走";
+    const HIGH_UNET = "wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors";
+    const LOW_UNET = "wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors";
+    const HIGH_LORA = "wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors";
+    const LOW_LORA = "wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors";
+
+    const drop = document.getElementById("drop");
+    const fileInput = document.getElementById("file");
+    const preview = document.getElementById("preview");
+    const promptEl = document.getElementById("prompt");
+    const form = document.getElementById("form");
+    const go = document.getElementById("go");
+    const statusEl = document.getElementById("status");
+    const player = document.getElementById("player");
+    const still = document.getElementById("still");
+
+    let file = null;
+    const clientId = crypto.randomUUID();
+
+    drop.addEventListener("click", () => fileInput.click());
+    drop.addEventListener("dragover", (e) => { e.preventDefault(); });
+    drop.addEventListener("drop", (e) => {
+      e.preventDefault();
+      if (e.dataTransfer.files[0]) setFile(e.dataTransfer.files[0]);
+    });
+    fileInput.addEventListener("change", () => {
+      if (fileInput.files[0]) setFile(fileInput.files[0]);
+    });
+
+    function setFile(next) {
+      file = next;
+      preview.src = URL.createObjectURL(next);
+      preview.hidden = false;
+      drop.classList.add("has-image");
+      drop.querySelector("span").hidden = true;
+    }
+
+    function setStatus(text, err) {
+      statusEl.textContent = text;
+      statusEl.classList.toggle("err", !!err);
+    }
+
+    function sizeFromImage(img) {
+      const maxSide = 640;
+      let w = img.naturalWidth || 640;
+      let h = img.naturalHeight || 640;
+      const scale = Math.min(1, maxSide / Math.max(w, h));
+      w = Math.max(16, Math.round((w * scale) / 16) * 16);
+      h = Math.max(16, Math.round((h * scale) / 16) * 16);
+      return { width: w, height: h };
+    }
+
+    function workflow({ imageName, prompt, seed, width, height }) {
+      return {
+        "1": { class_type: "UNETLoader", inputs: { unet_name: HIGH_UNET, weight_dtype: "default" } },
+        "2": { class_type: "LoraLoaderModelOnly", inputs: { model: ["1", 0], lora_name: HIGH_LORA, strength_model: 1 } },
+        "3": { class_type: "ModelSamplingSD3", inputs: { model: ["2", 0], shift: 5 } },
+        "4": { class_type: "UNETLoader", inputs: { unet_name: LOW_UNET, weight_dtype: "default" } },
+        "5": { class_type: "LoraLoaderModelOnly", inputs: { model: ["4", 0], lora_name: LOW_LORA, strength_model: 1 } },
+        "6": { class_type: "ModelSamplingSD3", inputs: { model: ["5", 0], shift: 5 } },
+        "7": { class_type: "CLIPLoader", inputs: { clip_name: "umt5_xxl_fp8_e4m3fn_scaled.safetensors", type: "wan" } },
+        "8": { class_type: "VAELoader", inputs: { vae_name: "wan_2.1_vae.safetensors" } },
+        "9": { class_type: "CLIPVisionLoader", inputs: { clip_name: "clip_vision_h.safetensors" } },
+        "10": { class_type: "LoadImage", inputs: { image: imageName } },
+        "11": { class_type: "ImageScale", inputs: { image: ["10", 0], upscale_method: "lanczos", width, height, crop: "center" } },
+        "12": { class_type: "CLIPVisionEncode", inputs: { clip_vision: ["9", 0], image: ["11", 0], crop: "center" } },
+        "13": { class_type: "CLIPTextEncode", inputs: { text: prompt, clip: ["7", 0] } },
+        "14": { class_type: "CLIPTextEncode", inputs: { text: NEGATIVE, clip: ["7", 0] } },
+        "15": {
+          class_type: "WanImageToVideo",
+          inputs: {
+            positive: ["13", 0],
+            negative: ["14", 0],
+            vae: ["8", 0],
+            width,
+            height,
+            length: 81,
+            batch_size: 1,
+            clip_vision_output: ["12", 0],
+            start_image: ["11", 0]
+          }
+        },
+        "16": {
+          class_type: "KSamplerAdvanced",
+          inputs: {
+            model: ["3", 0],
+            add_noise: "enable",
+            noise_seed: seed,
+            steps: 4,
+            cfg: 1,
+            sampler_name: "euler",
+            scheduler: "simple",
+            positive: ["15", 0],
+            negative: ["15", 1],
+            latent_image: ["15", 2],
+            start_at_step: 0,
+            end_at_step: 2,
+            return_with_leftover_noise: "enable"
+          }
+        },
+        "17": {
+          class_type: "KSamplerAdvanced",
+          inputs: {
+            model: ["6", 0],
+            add_noise: "disable",
+            noise_seed: seed,
+            steps: 4,
+            cfg: 1,
+            sampler_name: "euler",
+            scheduler: "simple",
+            positive: ["15", 0],
+            negative: ["15", 1],
+            latent_image: ["16", 0],
+            start_at_step: 2,
+            end_at_step: 4,
+            return_with_leftover_noise: "disable"
+          }
+        },
+        "18": { class_type: "VAEDecode", inputs: { samples: ["17", 0], vae: ["8", 0] } },
+        "19": { class_type: "CreateVideo", inputs: { images: ["18", 0], fps: 16 } },
+        "20": {
+          class_type: "SaveVideo",
+          inputs: { video: ["19", 0], filename_prefix: "video/i2v", format: "auto", codec: "auto" }
+        }
+      };
+    }
+
+    function viewUrl(item) {
+      const q = new URLSearchParams({
+        filename: item.filename,
+        subfolder: item.subfolder || "",
+        type: item.type || "output"
+      });
+      return "/view?" + q.toString();
+    }
+
+    function pickOutput(outputs) {
+      for (const node of Object.values(outputs || {})) {
+        for (const key of ["videos", "gifs", "images", "animated"]) {
+          if (node[key] && node[key][0]) return { item: node[key][0], kind: key };
+        }
+      }
+      return null;
+    }
+
+    function connectWs() {
+      const proto = location.protocol === "https:" ? "wss" : "ws";
+      const ws = new WebSocket(`${proto}://${location.host}/ws?clientId=${clientId}`);
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error("WebSocket timeout")), 10000);
+        ws.addEventListener("open", () => { clearTimeout(timer); resolve(ws); });
+        ws.addEventListener("error", () => { clearTimeout(timer); reject(new Error("WebSocket failed")); });
+      });
+    }
+
+    async function waitForDone(ws, promptId) {
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error("Timed out waiting for the video")), 15 * 60 * 1000);
+        ws.addEventListener("message", (ev) => {
+          let msg;
+          try { msg = JSON.parse(ev.data); } catch { return; }
+          if (msg.type === "progress" && msg.data) {
+            const { value, max } = msg.data;
+            if (max) setStatus(`Sampling ${value} / ${max}`);
+          }
+          if (msg.type === "executing" && msg.data) {
+            if (msg.data.prompt_id && msg.data.prompt_id !== promptId) return;
+            if (!msg.data.node) {
+              clearTimeout(timer);
+              resolve();
+              return;
+            }
+            setStatus("Running " + (msg.data.display_node || msg.data.node));
+          }
+          if (msg.type === "execution_error" && msg.data && msg.data.prompt_id === promptId) {
+            clearTimeout(timer);
+            reject(new Error(msg.data.exception_message || "Generation failed"));
+          }
+        });
+      });
+    }
+
+    async function pollHistory(promptId) {
+      for (let i = 0; i < 180; i++) {
+        const res = await fetch("/history/" + promptId);
+        const data = await res.json();
+        const entry = data[promptId];
+        if (entry && entry.status && entry.status.completed) return entry;
+        if (entry && entry.outputs && Object.keys(entry.outputs).length) {
+          const picked = pickOutput(entry.outputs);
+          if (picked) return entry;
+        }
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+      throw new Error("No output in history");
+    }
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      if (!file) {
+        setStatus("Upload a picture first.", true);
+        return;
+      }
+      const prompt = promptEl.value.trim();
+      if (!prompt) {
+        setStatus("Enter a prompt.", true);
+        return;
+      }
+      go.disabled = true;
+      player.classList.remove("show");
+      still.classList.remove("show");
+      player.removeAttribute("src");
+      try {
+        setStatus("Uploading…");
+        const body = new FormData();
+        body.append("image", file);
+        body.append("overwrite", "true");
+        body.append("type", "input");
+        const up = await fetch("/upload/image", { method: "POST", body });
+        if (!up.ok) throw new Error("Upload failed (" + up.status + ")");
+        const uploaded = await up.json();
+        const imageName = uploaded.name;
+        const { width, height } = sizeFromImage(preview);
+        const seed = Math.floor(Math.random() * 1e15);
+        setStatus("Queued…");
+        const ws = await connectWs();
+        const queued = await fetch("/prompt", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            prompt: workflow({ imageName, prompt, seed, width, height }),
+            client_id: clientId
+          })
+        });
+        const queuedJson = await queued.json();
+        if (!queued.ok || queuedJson.error) {
+          const err = queuedJson.error || queuedJson.node_errors || queuedJson;
+          throw new Error(typeof err === "string" ? err : (err.message || JSON.stringify(err)));
+        }
+        const promptId = queuedJson.prompt_id;
+        try {
+          await Promise.race([
+            waitForDone(ws, promptId),
+            pollHistory(promptId)
+          ]);
+        } catch (err) {
+          if (!String(err.message).includes("Timed out")) {
+            /* still try history in case WS missed the done event */
+          }
+        }
+        const history = await pollHistory(promptId);
+        ws.close();
+        const picked = pickOutput(history.outputs);
+        if (!picked) throw new Error("Finished, but no video file was returned.");
+        const url = viewUrl(picked.item);
+        if (picked.kind === "images") {
+          still.src = url;
+          still.classList.add("show");
+        } else {
+          player.src = url;
+          player.classList.add("show");
+          player.play().catch(() => {});
+        }
+        setStatus("Done.");
+      } catch (err) {
+        setStatus(err.message || String(err), true);
+      } finally {
+        go.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>

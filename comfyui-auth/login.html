@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Sign in</title>
+  <style>
+    :root {
+      --bg: #111113;
+      --panel: #1c1c1f;
+      --line: #2e2e33;
+      --text: #ececec;
+      --muted: #9a9aa3;
+      --accent: #6d8cff;
+      --danger: #e36a6a;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--text); font: 15px/1.45 system-ui, sans-serif; }
+    main { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
+    form { width: min(100%, 360px); background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 24px; }
+    h1 { font-size: 20px; font-weight: 600; margin: 0 0 6px; }
+    p { color: var(--muted); margin: 0 0 20px; }
+    label { display: block; font-size: 13px; color: var(--muted); margin: 0 0 6px; }
+    input {
+      width: 100%;
+      margin-bottom: 14px;
+      background: #161618;
+      color: var(--text);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px 12px;
+      font: inherit;
+    }
+    button {
+      appearance: none;
+      border: 0;
+      width: 100%;
+      background: var(--accent);
+      color: #0c1020;
+      font: 600 14px/1 system-ui, sans-serif;
+      padding: 12px;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+    .err { color: var(--danger); margin: 0 0 14px; display: none; }
+    .err.show { display: block; }
+  </style>
+</head>
+<body>
+  <main>
+    <form method="post" action="/login">
+      <h1>ComfyUI</h1>
+      <p>Sign in to use the graph and the simple page.</p>
+      <p class="err" id="err">Wrong id or password.</p>
+      <label for="username">Id</label>
+      <input id="username" name="username" autocomplete="username" required />
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required />
+      <button type="submit">Sign in</button>
+    </form>
+  </main>
+  <script>
+    if (new URLSearchParams(location.search).get("error")) {
+      document.getElementById("err").classList.add("show");
+    }
+  </script>
+</body>
+</html>
