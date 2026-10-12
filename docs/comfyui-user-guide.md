@@ -10,7 +10,7 @@ This is how to use the **node graph** on the ComfyUI site — the canvas of boxe
 
 Auth is built in this repo (`comfyui-auth/`). It is **not on the pod yet**. After you start the pod, upload that folder and run `install.sh` on it. ComfyUI must restart once so `/login` loads. FileBrowser picks up the new password immediately. Jupyter still uses `JUPYTER_PASSWORD` until you set that env to the same password on the next start.
 
-Last pod id used for this setup: `iql7hrzn0v6xw0`.
+Last pod id used for this setup: `qvj9hcwwlvof15`.
 
 Use `/i2v` when you only want a picture and a prompt. Use the graph when you want a downloaded workflow, different size/length, first-and-last-frame, extra LoRAs, or anything the simple page does not expose.
 

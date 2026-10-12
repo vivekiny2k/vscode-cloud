@@ -28,17 +28,21 @@ if [ ! -f "$FB_DB" ]; then
   exit 1
 fi
 
-if filebrowser users update "$USER" --password "$PASS" -d "$FB_DB"; then
-  echo "filebrowser_updated"
-elif filebrowser users update "$USER" -p "$PASS" -d "$FB_DB"; then
-  echo "filebrowser_updated"
-else
+pkill -TERM -x filebrowser || true
+sleep 1
+pkill -KILL -x filebrowser || true
+if ! filebrowser users update "$USER" --password "$PASS" -d "$FB_DB"; then
   echo "FileBrowser password update failed"
   exit 1
 fi
+filebrowser config set --address 0.0.0.0 -d "$FB_DB" >/dev/null
+filebrowser config set --port 8080 -d "$FB_DB" >/dev/null
+filebrowser config set --root /workspace -d "$FB_DB" >/dev/null
+nohup filebrowser -d "$FB_DB" >/filebrowser.log 2>&1 &
+echo "filebrowser_updated"
 
 echo
 echo "Auth files are in $DEST"
 echo "FileBrowser user $USER now uses the same password."
 echo "Restart ComfyUI so the login page loads (do not recreate the pod unless you mean to)."
-echo "Jupyter still uses JUPYTER_PASSWORD until you set that env to the same password on the next start."
+echo "Set JUPYTER_PASSWORD to the same password on pod create if Jupyter should match."
