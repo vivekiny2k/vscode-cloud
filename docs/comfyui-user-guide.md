@@ -12,7 +12,7 @@ Auth is built in this repo (`comfyui-auth/`). It is **not on the pod yet**. Afte
 
 Last pod id used for this setup: `qvj9hcwwlvof15`.
 
-Use `/i2v` when you only want a picture and a prompt. Use the graph when you want a downloaded workflow, different size/length, first-and-last-frame, extra LoRAs, or anything the simple page does not expose.
+Use `/i2v` when you only want a picture, a prompt, and a clip length (2 seconds to 1 minute). Clips longer than 5 seconds are chained 5-second Wan runs. Use the graph when you want a downloaded workflow, different size, first-and-last-frame, extra LoRAs, or anything the simple page does not expose.
 
 ---
 
@@ -221,7 +221,7 @@ Official extra Wan templates (same site, **Templates** search):
 | | `/i2v` | Graph |
 | --- | --- | --- |
 | What you do | Upload + prompt + Generate | Load a workflow, set 2–3 widgets, Run |
-| What is fixed | Wan 2.2 Lightning I2V, 4 steps, ~5 s | Whatever the JSON says |
+| What is fixed | Wan 2.2 Lightning I2V, 4 steps, 2 s–1 min | Whatever the JSON says |
 | Best for | Repeatable I2V | New templates, extra nodes, experiments |
 | Result | Plays on the page; also `output/video/` | Save Video node + `output/` |
 

@@ -35,9 +35,26 @@ if ! filebrowser users update "$USER" --password "$PASS" -d "$FB_DB"; then
   echo "FileBrowser password update failed"
   exit 1
 fi
+filebrowser users update "$USER" \
+  --perm.admin \
+  --perm.create \
+  --perm.delete \
+  --perm.download \
+  --perm.modify \
+  --perm.rename \
+  --perm.share \
+  -d "$FB_DB" >/dev/null || true
+BRAND="${BRAND:-/workspace/runpod-slim/filebrowser-branding}"
+mkdir -p "$BRAND"
+if [ -f "$SRC/../filebrowser-branding/custom.css" ]; then
+  cp -f "$SRC/../filebrowser-branding/custom.css" "$BRAND/custom.css"
+  sed -i 's/\r$//' "$BRAND/custom.css" || true
+fi
 filebrowser config set --address 0.0.0.0 -d "$FB_DB" >/dev/null
 filebrowser config set --port 8080 -d "$FB_DB" >/dev/null
 filebrowser config set --root /workspace -d "$FB_DB" >/dev/null
+filebrowser config set --branding.files "$BRAND" -d "$FB_DB" >/dev/null
+filebrowser config set --singleClick=false -d "$FB_DB" >/dev/null || true
 nohup filebrowser -d "$FB_DB" >/filebrowser.log 2>&1 &
 echo "filebrowser_updated"
 

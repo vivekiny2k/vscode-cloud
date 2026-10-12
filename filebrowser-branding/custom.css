@@ -1,0 +1,47 @@
+/* Keep header actions visible on desktop so Select multiple / Download / Delete stay usable. */
+#dropdown {
+  display: flex !important;
+  align-items: center;
+  position: static !important;
+  transform: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+#more {
+  display: none !important;
+}
+
+header .action[aria-label="Select multiple"] span,
+header .action[title="Select multiple"] span,
+header .action[aria-label="Download"] span,
+header .action[title="Download"] span,
+header .action[aria-label="Delete"] span,
+header .action[title="Delete"] span {
+  display: inline !important;
+  font-size: 12px;
+  font-weight: 600;
+  margin-left: 4px;
+}
+
+header .action[aria-label="Select multiple"],
+header .action[title="Select multiple"] {
+  background: #2979ff;
+  color: #fff;
+  border-radius: 8px;
+  padding: 0 10px;
+  margin-left: 6px;
+}
+
+header .action[aria-label="Select multiple"] i,
+header .action[title="Select multiple"] i {
+  color: #fff;
+}
+
+#listing .item[aria-selected="true"] {
+  outline: 2px solid #2979ff;
+}
+
+#listing #multiple-selection.active {
+  display: flex !important;
+}

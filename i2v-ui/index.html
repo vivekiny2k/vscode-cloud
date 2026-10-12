@@ -48,7 +48,17 @@
       padding: 10px 12px;
       font: inherit;
     }
-    textarea:focus, button:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+    textarea:focus, button:focus, select:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+    select {
+      width: 100%;
+      background: #161618;
+      color: var(--text);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px 12px;
+      font: inherit;
+    }
+    .hint { color: var(--muted); font-size: 12px; margin: 6px 0 0; }
     .row { display: flex; gap: 12px; align-items: center; margin-top: 16px; }
     button {
       appearance: none;
@@ -76,7 +86,7 @@
 <body>
   <main>
     <h1>Image to video</h1>
-    <p class="sub">Wan 2.2 Lightning · about 5 seconds · usually 1–2 minutes</p>
+    <p class="sub">Wan 2.2 Lightning · 16 fps</p>
     <form class="panel" id="form">
       <label>Picture</label>
       <div class="drop" id="drop">
@@ -86,6 +96,20 @@
       <input id="file" type="file" accept="image/*" hidden />
       <label for="prompt" style="margin-top:16px">Prompt</label>
       <textarea id="prompt" placeholder="What should happen in the video" required></textarea>
+      <label for="length" style="margin-top:16px">Clip length</label>
+      <select id="length">
+        <option value="2">2 seconds</option>
+        <option value="3">3 seconds</option>
+        <option value="4">4 seconds</option>
+        <option value="5" selected>5 seconds</option>
+        <option value="10">10 seconds</option>
+        <option value="15">15 seconds</option>
+        <option value="20">20 seconds</option>
+        <option value="30">30 seconds</option>
+        <option value="45">45 seconds</option>
+        <option value="60">1 minute</option>
+      </select>
+      <p class="hint" id="lengthHint">5 seconds is one Wan run. Longer clips are chained 5-second segments (a minute is 12 runs).</p>
       <div class="row">
         <button type="submit" id="go">Generate</button>
         <div class="status" id="status"></div>
@@ -100,11 +124,15 @@
     const LOW_UNET = "wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors";
     const HIGH_LORA = "wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors";
     const LOW_LORA = "wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors";
+    const FPS = 16;
+    const CHUNK_FRAMES = 81;
 
     const drop = document.getElementById("drop");
     const fileInput = document.getElementById("file");
     const preview = document.getElementById("preview");
     const promptEl = document.getElementById("prompt");
+    const lengthEl = document.getElementById("length");
+    const lengthHint = document.getElementById("lengthHint");
     const form = document.getElementById("form");
     const go = document.getElementById("go");
     const statusEl = document.getElementById("status");
@@ -132,6 +160,32 @@
       drop.querySelector("span").hidden = true;
     }
 
+    function framesForSeconds(sec) {
+      const raw = Math.max(FPS, Math.round(Number(sec) * FPS));
+      return Math.max(1, Math.round((raw - 1) / 4)) * 4 + 1;
+    }
+
+    function chunkPlan(totalFrames) {
+      if (totalFrames <= CHUNK_FRAMES) return [totalFrames];
+      const chunks = [];
+      let unique = 0;
+      while (unique < totalFrames) {
+        chunks.push(CHUNK_FRAMES);
+        unique += chunks.length === 1 ? CHUNK_FRAMES : CHUNK_FRAMES - 1;
+      }
+      return chunks;
+    }
+
+    function lengthHintText(sec) {
+      const chunks = chunkPlan(framesForSeconds(sec)).length;
+      if (chunks === 1) return "5 seconds is one Wan run. Longer clips are chained 5-second segments.";
+      return `${sec} seconds is ${chunks} GPU runs of ~5 seconds each. A minute is often 15–25 minutes of wait.`;
+    }
+
+    lengthEl.addEventListener("change", () => {
+      lengthHint.textContent = lengthHintText(lengthEl.value);
+    });
+
     function setStatus(text, err) {
       statusEl.textContent = text;
       statusEl.classList.toggle("err", !!err);
@@ -147,7 +201,7 @@
       return { width: w, height: h };
     }
 
-    function workflow({ imageName, prompt, seed, width, height }) {
+    function workflow({ imageName, prompt, seed, width, height, length }) {
       return {
         "1": { class_type: "UNETLoader", inputs: { unet_name: HIGH_UNET, weight_dtype: "default" } },
         "2": { class_type: "LoraLoaderModelOnly", inputs: { model: ["1", 0], lora_name: HIGH_LORA, strength_model: 1 } },
@@ -171,7 +225,7 @@
             vae: ["8", 0],
             width,
             height,
-            length: 81,
+            length,
             batch_size: 1,
             clip_vision_output: ["12", 0],
             start_image: ["11", 0]
@@ -214,11 +268,16 @@
           }
         },
         "18": { class_type: "VAEDecode", inputs: { samples: ["17", 0], vae: ["8", 0] } },
-        "19": { class_type: "CreateVideo", inputs: { images: ["18", 0], fps: 16 } },
+        "19": { class_type: "CreateVideo", inputs: { images: ["18", 0], fps: FPS } },
         "20": {
           class_type: "SaveVideo",
           inputs: { video: ["19", 0], filename_prefix: "video/i2v", format: "auto", codec: "auto" }
-        }
+        },
+        "21": {
+          class_type: "ImageFromBatch",
+          inputs: { image: ["18", 0], batch_index: Math.max(0, length - 1), length: 1 }
+        },
+        "22": { class_type: "SaveImage", inputs: { images: ["21", 0], filename_prefix: "video/i2v_last" } }
       };
     }
 
@@ -231,13 +290,46 @@
       return "/view?" + q.toString();
     }
 
-    function pickOutput(outputs) {
-      for (const node of Object.values(outputs || {})) {
-        for (const key of ["videos", "gifs", "images", "animated"]) {
-          if (node[key] && node[key][0]) return { item: node[key][0], kind: key };
+    function isFileItem(item) {
+      return item && typeof item === "object" && typeof item.filename === "string" && item.filename;
+    }
+
+    function pickVideo(outputs) {
+      const node = (outputs || {})["20"] || {};
+      for (const key of ["videos", "gifs", "images"]) {
+        const item = node[key] && node[key][0];
+        if (isFileItem(item)) return { item, kind: key === "images" ? "videos" : key };
+      }
+      for (const extra of Object.values(outputs || {})) {
+        for (const key of ["videos", "gifs", "images"]) {
+          const item = extra[key] && extra[key][0];
+          if (isFileItem(item) && /\.(mp4|webm|mov|mkv|gif)$/i.test(item.filename)) {
+            return { item, kind: key };
+          }
         }
       }
       return null;
+    }
+
+    function pickLastFrame(outputs) {
+      const node = (outputs || {})["22"] || {};
+      if (node.images && node.images[0]) return node.images[0];
+      return null;
+    }
+
+    async function uploadLastFrame(item, name) {
+      const blob = await fetch(viewUrl(item)).then((r) => {
+        if (!r.ok) throw new Error("Could not read last frame");
+        return r.blob();
+      });
+      const body = new FormData();
+      body.append("image", blob, name);
+      body.append("overwrite", "true");
+      body.append("type", "input");
+      const up = await fetch("/upload/image", { method: "POST", body });
+      if (!up.ok) throw new Error("Last-frame upload failed (" + up.status + ")");
+      const uploaded = await up.json();
+      return uploaded.name;
     }
 
     function connectWs() {
@@ -250,46 +342,79 @@
       });
     }
 
-    async function waitForDone(ws, promptId) {
+    async function waitForDone(ws, promptId, label) {
       return new Promise((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error("Timed out waiting for the video")), 15 * 60 * 1000);
-        ws.addEventListener("message", (ev) => {
+        const timer = setTimeout(() => {
+          ws.removeEventListener("message", onMessage);
+          reject(new Error("Timed out waiting for the video"));
+        }, 15 * 60 * 1000);
+        function finish(fn, value) {
+          clearTimeout(timer);
+          ws.removeEventListener("message", onMessage);
+          fn(value);
+        }
+        function onMessage(ev) {
           let msg;
           try { msg = JSON.parse(ev.data); } catch { return; }
           if (msg.type === "progress" && msg.data) {
             const { value, max } = msg.data;
-            if (max) setStatus(`Sampling ${value} / ${max}`);
+            if (max) setStatus(`${label}Sampling ${value} / ${max}`);
           }
           if (msg.type === "executing" && msg.data) {
             if (msg.data.prompt_id && msg.data.prompt_id !== promptId) return;
             if (!msg.data.node) {
-              clearTimeout(timer);
-              resolve();
+              finish(resolve);
               return;
             }
-            setStatus("Running " + (msg.data.display_node || msg.data.node));
+            setStatus(`${label}Running ` + (msg.data.display_node || msg.data.node));
           }
           if (msg.type === "execution_error" && msg.data && msg.data.prompt_id === promptId) {
-            clearTimeout(timer);
-            reject(new Error(msg.data.exception_message || "Generation failed"));
+            finish(reject, new Error(msg.data.exception_message || "Generation failed"));
           }
-        });
+        }
+        ws.addEventListener("message", onMessage);
       });
     }
 
-    async function pollHistory(promptId) {
+    async function pollHistory(promptId, needLastFrame) {
       for (let i = 0; i < 180; i++) {
         const res = await fetch("/history/" + promptId);
         const data = await res.json();
         const entry = data[promptId];
         if (entry && entry.status && entry.status.completed) return entry;
-        if (entry && entry.outputs && Object.keys(entry.outputs).length) {
-          const picked = pickOutput(entry.outputs);
-          if (picked) return entry;
+        if (entry && entry.outputs && pickVideo(entry.outputs) && (!needLastFrame || pickLastFrame(entry.outputs))) {
+          return entry;
         }
         await new Promise((r) => setTimeout(r, 2000));
       }
       throw new Error("No output in history");
+    }
+
+    async function runPrompt(ws, graph, label, needLastFrame) {
+      const queued = await fetch("/prompt", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: graph, client_id: clientId })
+      });
+      const queuedJson = await queued.json();
+      if (!queued.ok || queuedJson.error) {
+        const err = queuedJson.error || queuedJson.node_errors || queuedJson;
+        throw new Error(typeof err === "string" ? err : (err.message || JSON.stringify(err)));
+      }
+      const promptId = queuedJson.prompt_id;
+      try {
+        await Promise.race([
+          waitForDone(ws, promptId, label),
+          pollHistory(promptId, needLastFrame)
+        ]);
+      } catch (err) {
+        if (!String(err.message).includes("Timed out") && !String(err.message).includes("Generation failed")) {
+          /* still try history in case WS missed the done event */
+        } else if (String(err.message).includes("Generation failed")) {
+          throw err;
+        }
+      }
+      return pollHistory(promptId, needLastFrame);
     }
 
     form.addEventListener("submit", async (e) => {
@@ -318,46 +443,54 @@
         const uploaded = await up.json();
         const imageName = uploaded.name;
         const { width, height } = sizeFromImage(preview);
-        const seed = Math.floor(Math.random() * 1e15);
-        setStatus("Queued…");
+        const seconds = Number(lengthEl.value) || 5;
+        const chunks = chunkPlan(framesForSeconds(seconds));
+        setStatus(chunks.length > 1 ? `Queued segment 1 / ${chunks.length}…` : "Queued…");
         const ws = await connectWs();
-        const queued = await fetch("/prompt", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            prompt: workflow({ imageName, prompt, seed, width, height }),
-            client_id: clientId
-          })
-        });
-        const queuedJson = await queued.json();
-        if (!queued.ok || queuedJson.error) {
-          const err = queuedJson.error || queuedJson.node_errors || queuedJson;
-          throw new Error(typeof err === "string" ? err : (err.message || JSON.stringify(err)));
-        }
-        const promptId = queuedJson.prompt_id;
-        try {
-          await Promise.race([
-            waitForDone(ws, promptId),
-            pollHistory(promptId)
-          ]);
-        } catch (err) {
-          if (!String(err.message).includes("Timed out")) {
-            /* still try history in case WS missed the done event */
+        const clips = [];
+        let startName = imageName;
+        for (let i = 0; i < chunks.length; i++) {
+          const label = chunks.length > 1 ? `Segment ${i + 1} / ${chunks.length} · ` : "";
+          setStatus(label + "Queued…");
+          const seed = Math.floor(Math.random() * 1e15);
+          const history = await runPrompt(
+            ws,
+            workflow({ imageName: startName, prompt, seed, width, height, length: chunks[i] }),
+            label,
+            i < chunks.length - 1
+          );
+          const picked = pickVideo(history.outputs);
+          if (!picked) throw new Error("Finished a segment, but no video file was returned.");
+          clips.push(picked.item);
+          if (i < chunks.length - 1) {
+            const last = pickLastFrame(history.outputs);
+            if (!last) throw new Error("Could not get the last frame to continue the clip.");
+            setStatus(`Segment ${i + 2} / ${chunks.length} · preparing next start frame…`);
+            startName = await uploadLastFrame(last, `i2v_continue_${i + 1}.png`);
           }
         }
-        const history = await pollHistory(promptId);
         ws.close();
-        const picked = pickOutput(history.outputs);
-        if (!picked) throw new Error("Finished, but no video file was returned.");
-        const url = viewUrl(picked.item);
-        if (picked.kind === "images") {
-          still.src = url;
-          still.classList.add("show");
-        } else {
-          player.src = url;
-          player.classList.add("show");
-          player.play().catch(() => {});
+        let item = clips[0];
+        if (clips.length > 1) {
+          setStatus("Stitching segments…");
+          const stitched = await fetch("/i2v/concat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ clips })
+          });
+          const raw = await stitched.text();
+          let stitchedJson = {};
+          try { stitchedJson = JSON.parse(raw); } catch {
+            throw new Error("Could not stitch the video");
+          }
+          if (!stitched.ok || stitchedJson.error || !stitchedJson.filename) {
+            throw new Error(stitchedJson.error || "Could not stitch the video");
+          }
+          item = stitchedJson;
         }
+        player.src = viewUrl(item);
+        player.classList.add("show");
+        player.play().catch(() => {});
         setStatus("Done.");
       } catch (err) {
         setStatus(err.message || String(err), true);
