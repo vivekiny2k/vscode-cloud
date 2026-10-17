@@ -81,6 +81,13 @@
       display: none;
     }
     video.show, .out-img.show { display: block; }
+    a.open {
+      display: none;
+      margin-top: 12px;
+      color: var(--accent);
+      font-size: 14px;
+    }
+    a.open.show { display: inline-block; }
   </style>
 </head>
 <body>
@@ -116,6 +123,7 @@
       </div>
     </form>
     <video id="player" controls playsinline></video>
+    <a class="open" id="openClip">Download clip</a>
     <img class="out-img" id="still" alt="Result" />
   </main>
   <script>
@@ -137,7 +145,9 @@
     const go = document.getElementById("go");
     const statusEl = document.getElementById("status");
     const player = document.getElementById("player");
+    const openClip = document.getElementById("openClip");
     const still = document.getElementById("still");
+    let objectUrl = null;
 
     let file = null;
     const clientId = crypto.randomUUID();
@@ -290,6 +300,40 @@
       return "/view?" + q.toString();
     }
 
+    async function remuxClips(clips) {
+      const stitched = await fetch("/i2v/concat", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ clips })
+      });
+      const raw = await stitched.text();
+      let data = null;
+      try { data = JSON.parse(raw); } catch { data = null; }
+      if (!stitched.ok || !data || !data.filename) return null;
+      return data;
+    }
+
+    async function fetchMedia(item) {
+      const res = await fetch(viewUrl(item), { credentials: "same-origin" });
+      if (!res.ok) throw new Error("Could not load the clip (" + res.status + ")");
+      return new Blob([await res.arrayBuffer()], { type: "video/mp4" });
+    }
+
+    async function showClip(item) {
+      const blob = await fetchMedia(item);
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+      objectUrl = URL.createObjectURL(blob);
+      player.src = objectUrl;
+      player.classList.add("show");
+      openClip.href = objectUrl;
+      openClip.download = item.filename || "i2v.mp4";
+      openClip.textContent = "Download clip";
+      openClip.classList.add("show");
+      player.load();
+      try { await player.play(); } catch { /* controls still work if autoplay is blocked */ }
+    }
+
     function isFileItem(item) {
       return item && typeof item === "object" && typeof item.filename === "string" && item.filename;
     }
@@ -431,7 +475,12 @@
       go.disabled = true;
       player.classList.remove("show");
       still.classList.remove("show");
+      openClip.classList.remove("show");
       player.removeAttribute("src");
+      if (objectUrl) {
+        URL.revokeObjectURL(objectUrl);
+        objectUrl = null;
+      }
       try {
         setStatus("Uploading…");
         const body = new FormData();
@@ -470,27 +519,11 @@
           }
         }
         ws.close();
-        let item = clips[0];
-        if (clips.length > 1) {
-          setStatus("Stitching segments…");
-          const stitched = await fetch("/i2v/concat", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ clips })
-          });
-          const raw = await stitched.text();
-          let stitchedJson = {};
-          try { stitchedJson = JSON.parse(raw); } catch {
-            throw new Error("Could not stitch the video");
-          }
-          if (!stitched.ok || stitchedJson.error || !stitchedJson.filename) {
-            throw new Error(stitchedJson.error || "Could not stitch the video");
-          }
-          item = stitchedJson;
-        }
-        player.src = viewUrl(item);
-        player.classList.add("show");
-        player.play().catch(() => {});
+        setStatus(clips.length > 1 ? "Stitching segments…" : "Preparing clip…");
+        const remuxed = await remuxClips(clips);
+        const item = remuxed || clips[0];
+        if (clips.length > 1 && !remuxed) throw new Error("Could not stitch the video");
+        await showClip(item);
         setStatus("Done.");
       } catch (err) {
         setStatus(err.message || String(err), true);
